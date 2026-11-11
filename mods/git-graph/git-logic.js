@@ -2698,13 +2698,36 @@ export function lineSegments(spans, changes) {
 }
 
 /**
+ * The `provider/model` part of a model id, without its `#variant` suffix.
+ *
+ * @param {string} id
+ * @returns {string}
+ */
+export function modelBaseId(id) {
+  return String(id || "").split("#")[0];
+}
+
+/**
+ * Forces low reasoning on a model id. The AI commit worker runs as a background
+ * chore, so every model it starts gets `#low`; the launch path falls back to the
+ * model's default variant when the catalog rejects that variant.
+ *
+ * @param {string} id
+ * @returns {string}
+ */
+export function withLowReasoning(id) {
+  const base = modelBaseId(id);
+  return base ? `${base}#low` : base;
+}
+
+/**
  * True for a model the OpenCode catalog offers without charge.
  *
  * @param {string} id
  * @returns {boolean}
  */
 export function isFreeModel(id) {
-  const base = String(id || "").split("#")[0];
+  const base = modelBaseId(id);
   return /(?:^|[/-])free(?:$|[/-])/.test(base) || base === "opencode/big-pickle";
 }
 
@@ -2748,21 +2771,43 @@ export function cleanModelLabel(id) {
  * 3. Fallback preferences in priority order.
  * 4. First available free model.
  *
+ * Every result is normalized to the low reasoning variant, whatever variant
+ * the caller or the catalog used, so the background worker never burns a
+ * higher reasoning budget by accident.
+ *
  * @param {Array<any>} models
  * @param {{ override?: string | null, saved?: string | null, preferences?: string[] }} [options]
  * @returns {string | null}
  */
 export function resolveCleanAgentModelLogic(models, { override = null, saved = null, preferences = [] } = {}) {
-  const baseOf = (id) => String(id || "").split("#")[0];
   const list = Array.isArray(models) ? models : [];
-  const has = (id) => Boolean(id) && list.some((m) => (m.id || m) === baseOf(id));
-  if (override && has(override)) return override;
-  if (saved && has(saved)) return saved;
+  const has = (id) => Boolean(id) && list.some((m) => (m.id || m) === modelBaseId(id));
+  if (override && has(override)) return withLowReasoning(override);
+  if (saved && has(saved)) return withLowReasoning(saved);
   for (const candidate of preferences) {
-    if (has(candidate)) return candidate;
+    if (has(candidate)) return withLowReasoning(candidate);
   }
   const free = list.find((m) => m?.free);
-  return free ? free.id : null;
+  return free ? withLowReasoning(free.id) : null;
+}
+
+/**
+ * The fallback id for a worker whose low reasoning variant does not exist, or
+ * null when the failure is unrelated. OpenCode rejects an unknown variant with
+ * `provider.no-route` and "Variant unavailable for provider/model: variant",
+ * while an unknown model uses the same type with "Model unavailable: …", so
+ * the message decides whether dropping the variant can help.
+ *
+ * @param {string | null} model the id the worker tried to launch
+ * @param {{ errorMessage?: string; errorType?: string } | null} [error]
+ * @returns {string | null} the model without a variant, or null to keep the failure
+ */
+export function cleanAgentVariantFallback(model, error = null) {
+  const base = modelBaseId(model);
+  if (!base || base === String(model || "")) return null;
+  const message = String(error?.errorMessage || "");
+  const rejected = /variant/i.test(message) && /(?:unavailable|unsupported|invalid|unknown|not\s+found)/i.test(message);
+  return rejected ? base : null;
 }
 
 /**

@@ -81,6 +81,8 @@ import {
   diffTabTarget,
   resolveRepoPath,
   cleanModelLabel,
+  modelBaseId,
+  cleanAgentVariantFallback,
   resolveCleanAgentModelLogic,
   filterVisibleCleanModels,
   findLargeCommit,
@@ -467,6 +469,7 @@ export default class GitGraph extends View {
     this.treeAgentChecks = new Map(); // space key -> { sessionId, at, inFlight }
     this.treeAgentModel = null; // last resolved model id
     this.cleanModelsCache = null; // { at, root, on, models } from `opencode models`
+    this.cleanModelNoLow = new Set(); // model ids whose low variant this session rejected
     this.opencodeInstalled = props()?.noOpencode ? false : null; // boolean | null when unknown
 
     if (props()?.openModelPicker) {
@@ -6358,14 +6361,25 @@ export default class GitGraph extends View {
    * Resolve a model id: an explicit choice wins, a saved choice is used while
    * it exists, then the free preference list, then any free model. A paid
    * model is only ever used when the person chose it explicitly.
+   *
+   * Low reasoning is enforced on the result. A model whose low variant failed
+   * earlier in this session runs with its default variant instead, so every
+   * later start skips the rejected variant.
    */
   resolveCleanAgentModel(models, override = null) {
     const saved = this.treeAgentModel || shared(CLEAN_AGENT_MODEL_KEY);
-    return resolveCleanAgentModelLogic(models, {
+    const resolved = resolveCleanAgentModelLogic(models, {
       override,
       saved,
       preferences: CLEAN_AGENT_MODEL_PREFERENCE,
     });
+    return resolved && this.cleanModelNoLow.has(modelBaseId(resolved)) ? modelBaseId(resolved) : resolved;
+  }
+
+  /** Remembers that a model has no low reasoning variant, for this session only. */
+  rememberCleanModelNoLow(model) {
+    const base = modelBaseId(model);
+    if (base) this.cleanModelNoLow.add(base);
   }
 
   /** Models from the selected provider tab, or everything on the All tab. */
@@ -7112,6 +7126,27 @@ export default class GitGraph extends View {
           this.treeAgentStartingKeys.delete(key);
           this.closeTreeAgentToast(claimed);
           this.closeTreeAgentTab(claimed);
+          // Only this checkout's visible view reaches this branch, so its prompt
+          // describes the same repository as the failed worker.
+          const failure =
+            sessionInfo.error ||
+            (claimed.errorMessage ? { errorMessage: claimed.errorMessage, errorType: claimed.errorType } : null);
+          const variantFallback = cleanAgentVariantFallback(claimed.model, failure);
+          if (variantFallback) {
+            this.retryTreeAgentDefault(
+              cx,
+              key,
+              {
+                root: this.root,
+                on: this.on,
+                prompt: this.treeCleanupPrompt(),
+                headBefore: claimed.headBefore,
+                model: claimed.model,
+              },
+              variantFallback
+            );
+            return;
+          }
           this.reportTreeAgentStopped(cx, claimed, live, sessionInfo.error);
           return;
         }
@@ -7355,10 +7390,13 @@ export default class GitGraph extends View {
     this.rememberTreeAgentKey(key);
     cx.notify();
 
+    let model = null;
+    let headBefore = null;
+    let fallback = null;
     cx.spawn(async (cx) => {
       try {
         const headRes = await exec("git", [...READ, "rev-parse", "HEAD"], { cwd: root, on });
-        const headBefore = headRes.code === 0 ? headRes.stdout.trim() : null;
+        headBefore = headRes.code === 0 ? headRes.stdout.trim() : null;
 
         const models = await this.loadCleanAgentModels(root, on);
         if (this.opencodeInstalled === false) {
@@ -7375,7 +7413,7 @@ export default class GitGraph extends View {
           }
           return;
         }
-        const model = this.resolveCleanAgentModel(models, requestedModel);
+        model = this.resolveCleanAgentModel(models, requestedModel);
         if (!model) {
           notify({
             title: "No free AI model is available",
@@ -7392,51 +7430,129 @@ export default class GitGraph extends View {
         }
         this.treeAgentModel = model;
 
-        // No `herdr.space` / `herdr.tab` labels: those adopt the worker into
-        // that tab as a visible pane, splitting the tab. Unlabeled terminals
-        // stay hidden; peek and kill still reach them by address.
-        const args = ["run", "--bg", "--json", "--keep", "--no-parent", "--cwd", root, "--name", name];
-        if (on) args.push("--on", on);
-        args.push(
-          "--",
-          "opencode",
-          "mini",
-          "--session",
-          sessionId,
-          "--agent",
-          "build",
-          "--model",
-          model,
-          "--prompt",
-          prompt
-        );
-
-        const r = await hc(args);
-        if (r.code !== 0) {
-          const detail = (r.stderr || r.stdout).trim() || `hc exited with code ${r.code}`;
-          throw new Error(detail);
-        }
-
-        let address = null;
-        try {
-          address = JSON.parse(r.stdout).address ?? null;
-        } catch {}
-        const agent = {
-          address,
-          name,
-          sessionId,
-          root,
-          on,
-          headBefore,
-          model,
-          startedAt: Date.now(),
-          found: false,
-          busy: null,
-          toastId: null,
-          peekOpen: false,
-        };
+        const agent = await this.launchTreeAgent({ root, on, prompt, name, sessionId, headBefore, model });
         agent.toastId = this.showTreeAgentProgressToast(agent, model);
         this.setTreeAgent(agent, key);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // A launch that rejects the low variant retries once with the model's
+        // default variant instead of sending the person to the picker.
+        fallback = cleanAgentVariantFallback(model, { errorMessage: msg });
+        if (!fallback) {
+          notify({
+            title: "Could not start the AI commit worker",
+            body: msg.length > 600 ? `${msg.slice(0, 600)}…` : msg,
+            level: "error",
+          });
+          if (key === this.treeAgentKey()) this.openCleanAgentModelPicker(cx, msg);
+        }
+      } finally {
+        this.treeAgentStartingKeys.delete(key);
+        if (!this.getTreeAgent(key)) this.forgetTreeAgentKey(key);
+        cx.notify();
+      }
+      if (fallback) {
+        this.retryTreeAgentDefault(cx, key, { root, on, prompt, headBefore, model }, fallback);
+      }
+    });
+  }
+
+  /**
+   * Starts the hidden `hc run` terminal for the AI commit worker. Without
+   * `herdr.space` / `herdr.tab` labels, the worker stays a background process
+   * instead of being adopted into a tab as a visible pane; peek and kill still
+   * reach it by address.
+   *
+   * @param {{
+   *   root: string;
+   *   on: string | null;
+   *   prompt: string;
+   *   name: string;
+   *   sessionId: string;
+   *   headBefore: string | null;
+   *   model: string;
+   * }} options
+   * @returns {Promise<Record<string, any>>} the worker record to store in shared state
+   */
+  async launchTreeAgent({ root, on, prompt, name, sessionId, headBefore, model }) {
+    const args = ["run", "--bg", "--json", "--keep", "--no-parent", "--cwd", root, "--name", name];
+    if (on) args.push("--on", on);
+    args.push(
+      "--",
+      "opencode",
+      "mini",
+      "--session",
+      sessionId,
+      "--agent",
+      "build",
+      "--model",
+      model,
+      "--prompt",
+      prompt
+    );
+
+    const r = await hc(args);
+    if (r.code !== 0) {
+      const detail = (r.stderr || r.stdout).trim() || `hc exited with code ${r.code}`;
+      throw new Error(detail);
+    }
+
+    let address = null;
+    try {
+      address = JSON.parse(r.stdout).address ?? null;
+    } catch {}
+
+    return {
+      address,
+      name,
+      sessionId,
+      root,
+      on,
+      headBefore,
+      model,
+      startedAt: Date.now(),
+      found: false,
+      busy: null,
+      toastId: null,
+      peekOpen: false,
+    };
+  }
+
+  /**
+   * Retries a worker whose model rejected the low reasoning variant with that
+   * model's default variant. The caller already closed the failed terminal, so
+   * this starts a fresh terminal and session in its place and remembers the
+   * model so later starts skip the variant entirely.
+   *
+   * @param {import("./gpui-kit.js").Context} cx
+   * @param {string} key the checkout key the worker belongs to
+   * @param {{ root: string; on: string | null; prompt: string; headBefore: string | null; model: string }} failed
+   * @param {string} model the default-variant model to retry with
+   */
+  retryTreeAgentDefault(cx, key, failed, model) {
+    this.rememberCleanModelNoLow(failed.model);
+    this.treeAgentStartingKeys.add(key);
+    this.rememberTreeAgentKey(key);
+    cx.notify();
+
+    cx.spawn(async (cx) => {
+      try {
+        const agent = await this.launchTreeAgent({
+          root: failed.root,
+          on: failed.on,
+          prompt: failed.prompt,
+          name: this.treeAgentName(),
+          sessionId: this.treeAgentSessionId(),
+          headBefore: failed.headBefore,
+          model,
+        });
+        agent.toastId = this.showTreeAgentProgressToast(agent, model);
+        this.setTreeAgent(agent, key);
+        notify({
+          title: "Using the model's default reasoning",
+          body: `${cleanModelLabel(model)} has no low reasoning variant.`,
+          level: "info",
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         notify({

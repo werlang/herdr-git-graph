@@ -49,6 +49,9 @@ import {
   diffTabTarget,
   resolveRepoPath,
   cleanModelLabel,
+  modelBaseId,
+  withLowReasoning,
+  cleanAgentVariantFallback,
   resolveCleanAgentModelLogic,
   filterVisibleCleanModels,
   parseCommitStats,
@@ -795,7 +798,7 @@ test("isLightColor: picks the contrasting toast spinner", () => {
   assert.equal(isLightColor("not-a-color"), true);
 });
 
-test("resolveCleanAgentModelLogic: honors saved model even if paid over default free models", () => {
+test("resolveCleanAgentModelLogic: honors saved model even if paid and enforces low reasoning", () => {
   const models = [
     { id: "opencode/deepseek-v4.1-flash-free", free: true },
     { id: "opencode/glm-5.3-flash-free", free: true },
@@ -803,20 +806,26 @@ test("resolveCleanAgentModelLogic: honors saved model even if paid over default 
   ];
   const preferences = ["opencode/deepseek-v4.1-flash-free#low"];
 
-  // When Haiku is saved, it should resolve to Haiku
+  // When Haiku is saved, it should resolve to Haiku at low reasoning
   const resolved = resolveCleanAgentModelLogic(models, {
     saved: "github-copilot/claude-haiku-5.5",
     preferences,
   });
-  assert.equal(resolved, "github-copilot/claude-haiku-5.5");
+  assert.equal(resolved, "github-copilot/claude-haiku-5.5#low");
 
-  // When an explicit override is passed, override wins
+  // An explicit override wins and is normalized to low as well
   const overridden = resolveCleanAgentModelLogic(models, {
     override: "opencode/glm-5.3-flash-free",
     saved: "github-copilot/claude-haiku-5.5",
     preferences,
   });
-  assert.equal(overridden, "opencode/glm-5.3-flash-free");
+  assert.equal(overridden, "opencode/glm-5.3-flash-free#low");
+
+  // A saved higher variant is overridden: the worker always runs low
+  const normalized = resolveCleanAgentModelLogic(models, {
+    saved: "github-copilot/claude-haiku-5.5#high",
+  });
+  assert.equal(normalized, "github-copilot/claude-haiku-5.5#low");
 
   // When saved model is not in models catalog, fallback to preference
   const fallback = resolveCleanAgentModelLogic(models, {
@@ -824,6 +833,51 @@ test("resolveCleanAgentModelLogic: honors saved model even if paid over default 
     preferences,
   });
   assert.equal(fallback, "opencode/deepseek-v4.1-flash-free#low");
+
+  // With no preference match, the first free model still gets low reasoning
+  const free = resolveCleanAgentModelLogic(models, { preferences: ["other/gone#low"] });
+  assert.equal(free, "opencode/deepseek-v4.1-flash-free#low");
+});
+
+test("modelBaseId and withLowReasoning: strip or enforce the reasoning variant", () => {
+  assert.equal(modelBaseId("opencode/deepseek-v4.1-flash-free#high"), "opencode/deepseek-v4.1-flash-free");
+  assert.equal(modelBaseId("opencode/deepseek-v4.1-flash-free"), "opencode/deepseek-v4.1-flash-free");
+  assert.equal(modelBaseId(null), "");
+
+  assert.equal(withLowReasoning("opencode/deepseek-v4.1-flash-free"), "opencode/deepseek-v4.1-flash-free#low");
+  assert.equal(withLowReasoning("opencode/deepseek-v4.1-flash-free#low"), "opencode/deepseek-v4.1-flash-free#low");
+  assert.equal(withLowReasoning("opencode/deepseek-v4.1-flash-free#high"), "opencode/deepseek-v4.1-flash-free#low");
+  assert.equal(withLowReasoning(""), "");
+});
+
+test("cleanAgentVariantFallback: drops only a rejected reasoning variant", () => {
+  const rejected = {
+    errorType: "provider.no-route",
+    errorMessage: "Variant unavailable for opencode/deepseek-v4.1-flash-free: low",
+  };
+  assert.equal(
+    cleanAgentVariantFallback("opencode/deepseek-v4.1-flash-free#low", rejected),
+    "opencode/deepseek-v4.1-flash-free"
+  );
+
+  // Unknown model: dropping the variant cannot help, so keep the failure
+  assert.equal(
+    cleanAgentVariantFallback("opencode/gone-model#low", {
+      errorType: "provider.no-route",
+      errorMessage: "Model unavailable: opencode/gone-model",
+    }),
+    null
+  );
+
+  // Already running without a variant: nothing to fall back to
+  assert.equal(cleanAgentVariantFallback("opencode/deepseek-v4.1-flash-free", rejected), null);
+  assert.equal(cleanAgentVariantFallback(null, rejected), null);
+
+  // Unrelated failures never trigger a retry
+  assert.equal(
+    cleanAgentVariantFallback("opencode/deepseek-v4.1-flash-free#low", { errorMessage: "rate limit reached" }),
+    null
+  );
 });
 
 test("filterVisibleCleanModels: includes active paid model at index 0 even when showAll is false", () => {
