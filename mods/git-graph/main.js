@@ -7006,6 +7006,21 @@ export default class GitGraph extends View {
         if (this.getTreeAgent(key)?.sessionId !== agent.sessionId) return;
         if (status.code !== 0) return;
 
+        // A linked worktree nested in this checkout is not pending work. Without
+        // this filter the worker would see `.worktrees/<slug>/` forever and
+        // never report a clean tree (or would stage it as a gitlink).
+        const wtList = await exec("git", [...READ, "worktree", "list", "--porcelain"], {
+          cwd: agent.root,
+          on: agent.on,
+        });
+        if (this.getTreeAgent(key)?.sessionId !== agent.sessionId) return;
+        const checkouts = wtList.code === 0 ? parseWorktreeList(wtList.stdout) : [];
+        const worktreePrefixes = linkedWorktreePrefixes(agent.root, checkouts);
+        const dirtyEntries = status.stdout
+          .split("\0")
+          .filter(Boolean)
+          .filter((entry) => !isLinkedWorktreePath(entry.slice(3), worktreePrefixes));
+
         let commitCount = 0;
         let largeCommit = null;
         const from = agent.headBefore;
@@ -7021,7 +7036,7 @@ export default class GitGraph extends View {
           if (stats.code === 0) largeCommit = findLargeCommit(stats.stdout, CLEAN_AGENT_LARGE_COMMIT_LINES);
         }
 
-        const isClean = !status.stdout.trim();
+        const isClean = dirtyEntries.length === 0;
 
         // If new commits were created, the worker succeeded even if some untracked
         // user files (like .env) were intentionally preserved.
@@ -7278,7 +7293,8 @@ export default class GitGraph extends View {
       operation,
       shown.length ? `Changed paths:\n${shown.join("\n")}` : "",
       "Work only on the current branch. Do not create or switch branches or worktrees.",
-      "The user explicitly triggered this cleanup action to commit pending work (source code, tests, documentation, task plans, and project configurations). Even if an AGENTS.md, task note, or historical doc mentions that a file was temporarily uncommitted or WIP, the user's intent now is to review, stage, and commit meaningful work rather than leaving it behind. The ONLY files you should leave uncommitted or untracked are actual local secrets/credentials (e.g. .env, unless .env.example) or files that explicitly belong in .gitignore.",
+      "Never stage nested repositories or linked worktrees (for example paths under .worktrees/). They are separate checkouts, not project content: staging one records a gitlink and loses the worktree's files. Leave them untracked.",
+      "The user explicitly triggered this cleanup action to commit pending work (source code, tests, documentation, task plans, and project configurations). Even if an AGENTS.md, task note, or historical doc mentions that a file was temporarily uncommitted or WIP, the user's intent now is to review, stage, and commit meaningful work rather than leaving it behind. The ONLY files you should leave uncommitted or untracked are actual local secrets/credentials (e.g. .env, unless .env.example), files that explicitly belong in .gitignore, and nested repositories or linked worktrees (for example paths under .worktrees/).",
       "Read the repository's AGENTS.md, CLAUDE.md, and CONTRIBUTING.md for project conventions and test commands, but adhere to the above user mandate to commit pending work.",
       "Load and follow the @git-change-workflow skill for commit slicing and Conventional Commit messages. This task is an explicit exception to its branch rule: commit on the current branch.",
       "If a merge, rebase, cherry-pick, or revert is in progress, understand and resolve every conflict, stage the resolutions, and complete the operation non-interactively with `git -c core.editor=true merge --continue` (or rebase/cherry-pick/revert --continue). Always pass -m to git commit.",
