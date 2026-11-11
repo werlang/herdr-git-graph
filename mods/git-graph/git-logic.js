@@ -428,6 +428,125 @@ export function fileEditorTabTarget(
   };
 }
 
+/** Shared-state key mapping open diff tabs to the exact diff each one renders. */
+export const DIFF_TABS_KEY = "git-graph.diffTabs";
+
+/**
+ * Builds the identity of one diff: repository, kind, commit and file. The
+ * separator cannot appear in a path, so two different diffs never share a key.
+ *
+ * @param {string | null | undefined} root
+ * @param {"worktree" | "commit" | string | null | undefined} kind
+ * @param {string | null | undefined} hash
+ * @param {string | null | undefined} file
+ * @returns {string}
+ */
+export function diffTabKey(root, kind, hash, file) {
+  const normRoot = typeof root === "string" ? root.replace(/\\/g, "/").replace(/\/+$/, "") : "";
+  const normKind = kind === "commit" ? "commit" : "worktree";
+  const normHash = normKind === "commit" && typeof hash === "string" ? hash : "";
+  const normFile = typeof file === "string" ? file.replace(/\\/g, "/").replace(/^\/+/, "") : "";
+  return [normRoot, normKind, normHash, normFile].join("\u001f");
+}
+
+/**
+ * Resolves the tab that should show one diff.
+ *
+ * A diff is identified by its repository, kind, commit and full path, so two
+ * files that only share a basename (for example `src/app.js` and `lib/app.js`)
+ * never reuse each other's tab. The live tab recorded in
+ * `shared("git-graph.diffTabs")` is reused only when that exact diff matches.
+ * New tabs fall back to a collision-free name: the basename, then the
+ * containing directory, then a numeric suffix.
+ *
+ * @param {string | null | undefined} root
+ * @param {string | null | undefined} file
+ * @param {{
+ *   kind?: "worktree" | "commit",
+ *   hash?: string | null,
+ *   activeTabs?: Array<{ id: string, name: string, settled?: boolean }>,
+ *   openTabs?: Record<string, { tabId?: string, tabName?: string }>,
+ *   gitGraphTabIds?: Set<string> | string[] | null,
+ * }} [options]
+ * @returns {{ existingTabId: string | null, tabName: string, diffKey: string, entry: Record<string, any> | null }}
+ */
+export function diffTabTarget(root, file, options = {}) {
+  const normRoot = typeof root === "string" ? root.replace(/\\/g, "/").replace(/\/+$/, "") : "";
+  const normFile = typeof file === "string" ? file.replace(/\\/g, "/").replace(/^\/+/, "") : "";
+  const kind = options.kind === "commit" ? "commit" : "worktree";
+  const hash = kind === "commit" && typeof options.hash === "string" ? options.hash : "";
+  const diffKey = diffTabKey(normRoot, kind, hash, normFile);
+
+  const liveTabs = Array.isArray(options.activeTabs)
+    ? options.activeTabs.filter((tab) => tab && !tab.settled)
+    : [];
+  const graphIds =
+    options.gitGraphTabIds instanceof Set
+      ? options.gitGraphTabIds
+      : new Set(Array.isArray(options.gitGraphTabIds) ? options.gitGraphTabIds : []);
+  const isGitGraphTab = (tab) => graphIds.size === 0 || graphIds.has(tab.id);
+  const map = options.openTabs && typeof options.openTabs === "object" ? options.openTabs : {};
+  const recorded = map[diffKey];
+
+  if (recorded && typeof recorded === "object") {
+    const matched = liveTabs.find((tab) => {
+      if (!isGitGraphTab(tab)) return false;
+      if (typeof recorded.tabId === "string" && recorded.tabId.length > 0) {
+        return tab.id === recorded.tabId;
+      }
+      return (
+        typeof recorded.tabName === "string" &&
+        recorded.tabName.length > 0 &&
+        tab.name === recorded.tabName
+      );
+    });
+    if (matched) {
+      return {
+        existingTabId: matched.id,
+        tabName: matched.name,
+        diffKey,
+        entry: {
+          ...recorded,
+          root: normRoot || null,
+          kind,
+          hash: hash || null,
+          file: normFile,
+          tabId: matched.id,
+          tabName: matched.name,
+        },
+      };
+    }
+  }
+
+  if (!normFile) {
+    return { existingTabId: null, tabName: "Diff", diffKey, entry: null };
+  }
+
+  const base = normFile.split("/").pop() || normFile;
+  const suffix = hash ? ` (${hash.slice(0, 7)})` : "";
+  const dir = normFile.includes("/") ? normFile.slice(0, normFile.lastIndexOf("/")) : "";
+  const baseName = `Diff · ${base}${suffix}`;
+  const qualified = dir ? `Diff · ${dir}/${base}${suffix}` : baseName;
+  const hasCollision = (name) => liveTabs.some((tab) => tab.name === name);
+  let tabName = baseName;
+  if (hasCollision(baseName)) {
+    let candidate = qualified;
+    let n = 2;
+    while (hasCollision(candidate)) {
+      candidate = `${qualified} (${n})`;
+      n++;
+    }
+    tabName = candidate;
+  }
+
+  return {
+    existingTabId: null,
+    tabName,
+    diffKey,
+    entry: { root: normRoot || null, kind, hash: hash || null, file: normFile, tabName },
+  };
+}
+
 /**
  * Builds the absolute path of a repository-relative file. Separators are
  * normalized to forward slashes, and a trailing root slash is not doubled.

@@ -74,7 +74,7 @@ Instead of switching away to an external Git GUI or browser tool, `git-graph` re
   - **Wrap** toggles soft wrapping for long lines in every layout, with the choice remembered across tabs. It reflows to the pane width, keeps line numbers on the first visual row, and preserves syntax colors and intra-line highlights across continuation rows.
   - Character-level intra-line highlighting: changed characters get a brighter red/green background on top of the syntax colors, so a one-character edit inside a long line is visible at a glance (VS Code-style).
   - Working-tree diffs are synthesized for untracked files and refresh automatically while the repo changes.
-  - Clicking the same file again selects the existing diff tab instead of piling up duplicates; commit diffs are named `Diff · <file> (<short sha>)`.
+  - Clicking the same file again selects the existing diff tab instead of piling up duplicates; commit diffs are named `Diff · <file> (<short sha>)`. Tabs are matched by repository, kind, commit, and full path, so two files that only share a basename (`src/app.js` and `lib/app.js`) each get their own tab; when a name is already taken, it falls back to `Diff · <dir>/<file>`.
 - **Commit Right-Click Context Menu & Interactive Modals**:
   - Right-click any commit row to open a native context menu with 10 Git actions:
     - **Checkout Commit...** (confirmation modal with detached HEAD and dirty tree warnings)

@@ -40,6 +40,9 @@ import {
   FILE_EDITOR_MOD,
   FILE_EDITOR_INSTALL_HINT,
   fileEditorTabTarget,
+  DIFF_TABS_KEY,
+  diffTabKey,
+  diffTabTarget,
   resolveRepoPath,
   cleanModelLabel,
   resolveCleanAgentModelLogic,
@@ -1146,6 +1149,106 @@ test("fileEditorTabTarget: reuses recorded editor tabs and derives unique names"
     existingTabId: null,
     tabName: "File",
     fileKey: "/repo/",
+    entry: null,
+  });
+});
+
+test("diffTabTarget: identifies a diff by full path, never by basename alone", () => {
+  assert.equal(DIFF_TABS_KEY, "git-graph.diffTabs");
+
+  // Two files that share a basename must not reuse one diff tab.
+  const src = diffTabTarget("/repo", "src/app.js", { kind: "worktree" });
+  assert.equal(src.existingTabId, null);
+  assert.equal(src.tabName, "Diff · app.js");
+  assert.equal(src.diffKey, diffTabKey("/repo", "worktree", null, "src/app.js"));
+
+  const lib = diffTabTarget("/repo", "lib/app.js", {
+    kind: "worktree",
+    activeTabs: [{ id: "tab-src", name: "Diff · app.js" }],
+    openTabs: {
+      [diffTabKey("/repo", "worktree", null, "src/app.js")]: {
+        root: "/repo",
+        kind: "worktree",
+        hash: null,
+        file: "src/app.js",
+        tabId: "tab-src",
+        tabName: "Diff · app.js",
+      },
+    },
+    gitGraphTabIds: new Set(["tab-src"]),
+  });
+  assert.equal(lib.existingTabId, null);
+  assert.equal(lib.tabName, "Diff · lib/app.js");
+
+  // Clicking the same file again reuses its recorded tab.
+  const same = diffTabTarget("/repo", "src/app.js", {
+    kind: "worktree",
+    activeTabs: [{ id: "tab-src", name: "Diff · app.js" }],
+    openTabs: {
+      [diffTabKey("/repo", "worktree", null, "src/app.js")]: {
+        root: "/repo",
+        kind: "worktree",
+        hash: null,
+        file: "src/app.js",
+        tabId: "tab-src",
+        tabName: "Diff · app.js",
+      },
+    },
+    gitGraphTabIds: new Set(["tab-src"]),
+  });
+  assert.equal(same.existingTabId, "tab-src");
+  assert.equal(same.tabName, "Diff · app.js");
+  assert.equal(same.entry.tabId, "tab-src");
+
+  // A closed or foreign tab is not reused, even when its name matches.
+  const stale = diffTabTarget("/repo", "src/app.js", {
+    kind: "worktree",
+    activeTabs: [{ id: "other", name: "Diff · app.js" }],
+    openTabs: {
+      [diffTabKey("/repo", "worktree", null, "src/app.js")]: {
+        root: "/repo",
+        file: "src/app.js",
+        tabId: "tab-closed",
+        tabName: "Diff · app.js",
+      },
+    },
+    gitGraphTabIds: new Set(["other"]),
+  });
+  assert.equal(stale.existingTabId, null);
+
+  // Commit diffs include the short hash and never collide with the worktree.
+  const commit = diffTabTarget("/repo", "src/app.js", {
+    kind: "commit",
+    hash: "0123456789abcdef0123456789abcdef01234567",
+    activeTabs: [{ id: "tab-src", name: "Diff · app.js" }],
+  });
+  assert.equal(commit.tabName, "Diff · app.js (0123456)");
+  assert.notEqual(
+    commit.diffKey,
+    diffTabKey("/repo", "worktree", null, "src/app.js")
+  );
+
+  // A second repository with the same relative paths gets a suffix.
+  const otherRepo = diffTabTarget("/other", "src/app.js", {
+    kind: "worktree",
+    activeTabs: [
+      { id: "tab-1", name: "Diff · app.js" },
+      { id: "tab-2", name: "Diff · src/app.js" },
+    ],
+  });
+  assert.equal(otherRepo.tabName, "Diff · src/app.js (2)");
+
+  // Windows separators and trailing root slashes normalize to one key.
+  assert.equal(
+    diffTabKey("C:\\repo\\", "worktree", null, "src\\app.js"),
+    diffTabKey("C:/repo", "worktree", null, "src/app.js")
+  );
+
+  // Missing files are never opened.
+  assert.deepEqual(diffTabTarget("/repo", "", {}), {
+    existingTabId: null,
+    tabName: "Diff",
+    diffKey: diffTabKey("/repo", "worktree", null, ""),
     entry: null,
   });
 });

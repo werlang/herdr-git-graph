@@ -76,6 +76,8 @@ import {
   FILE_EDITOR_MOD,
   FILE_EDITOR_INSTALL_HINT,
   fileEditorTabTarget,
+  DIFF_TABS_KEY,
+  diffTabTarget,
   resolveRepoPath,
   cleanModelLabel,
   resolveCleanAgentModelLogic,
@@ -1464,23 +1466,37 @@ export default class GitGraph extends View {
     }
     const kind = c.isWorkingTree ? "worktree" : "commit";
     const hash = kind === "commit" ? c.hash : null;
-    const base = normPath.split("/").pop() || normPath;
-    const suffix = kind === "commit" && c.shortHash ? ` (${c.shortHash})` : "";
-    const name = `Diff · ${base}${suffix}`;
 
     this.selectedFile = normPath;
-    const existing = (spaces().find((s) => s.active)?.tabs ?? []).find((tab) => tab.name === name && !tab.settled);
-    if (existing) {
-      run("tab.select", { id: existing.id });
+    const activeTabs = spaces().find((s) => s.active)?.tabs ?? [];
+    const gitGraphTabIds = new Set(
+      panes()
+        .filter((pane) => pane.mod === "git-graph")
+        .map((pane) => pane.tab)
+    );
+    const sharedTabs = shared(DIFF_TABS_KEY);
+    const openTabs = sharedTabs && typeof sharedTabs === "object" ? sharedTabs : {};
+    const target = diffTabTarget(this.root, normPath, {
+      kind,
+      hash,
+      activeTabs,
+      openTabs,
+      gitGraphTabIds,
+    });
+    if (target.existingTabId) {
+      run("tab.select", { id: target.existingTabId });
       cx.notify();
       return;
+    }
+    if (target.entry) {
+      setShared(DIFF_TABS_KEY, { ...openTabs, [target.diffKey]: target.entry });
     }
 
     /** @type {Record<string, any>} */
     const tabProps = { folder: this.root, diffFile: normPath, diffKind: kind };
     if (hash) tabProps.diffHash = hash;
     if (this.on) tabProps.on = this.on;
-    run("tab.new", { name, mod: "git-graph", props: tabProps });
+    run("tab.new", { name: target.tabName, mod: "git-graph", props: tabProps });
     cx.notify();
   }
 
