@@ -995,12 +995,20 @@ function parkNode(children, key, node) {
  * directory with a symlink shows the new `foo` file next to the removed
  * `foo/bar` file. Both entries are kept instead of assuming the first one is a
  * directory.
+ *
+ * Git reports an embedded repository (a linked worktree or a submodule) as one
+ * path ending in `/`. Such a path becomes a single non-diffable row named after
+ * its last segment; it must never grow an empty-named child row.
  */
 export function buildFileTree(files) {
   const root = { isDir: true, path: "", name: "", children: new Map(), add: 0, del: 0 };
 
   for (const file of files) {
-    const parts = file.path.split("/");
+    const rawPath = String(file?.path ?? "");
+    const trimmedPath = rawPath.replace(/\/+$/, "");
+    if (!trimmedPath) continue;
+    const nestedRepo = /\/+$/.test(rawPath);
+    const parts = trimmedPath.split("/");
     let current = root;
     for (let i = 0; i < parts.length - 1; i++) {
       const part = parts[i];
@@ -1036,9 +1044,9 @@ export function buildFileTree(files) {
     }
     current.children.set(fileName, {
       isDir: false,
-      path: file.path,
+      path: rawPath,
       name: fileName,
-      file,
+      file: nestedRepo ? { ...file, path: rawPath, binary: true, nestedRepo: true } : file,
       add: file.add || 0,
       del: file.del || 0,
       status: file.status || "M",
@@ -1156,6 +1164,9 @@ export function isDiffable(fileOrPath, extra) {
   if (!fileOrPath) return false;
   const path = typeof fileOrPath === "string" ? fileOrPath : fileOrPath?.path ?? "";
   if (!path) return false;
+  // A status path ending in `/` is a directory or an embedded repository, not
+  // a file that can be opened in a diff.
+  if (/\/+$/.test(path)) return false;
   const fileObj = typeof fileOrPath === "object" ? fileOrPath : extra;
 
   if (fileObj?.binary === true || fileObj?.file?.binary === true) return false;

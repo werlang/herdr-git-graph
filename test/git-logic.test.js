@@ -503,6 +503,29 @@ test("buildFileTree: a directory added after a file with the same name keeps bot
   assert.equal(rows[2].file.status, "D");
 });
 
+test("buildFileTree: an embedded repository path becomes one named row, not an empty child", () => {
+  const files = [
+    { path: ".worktrees/delivery-lead/", status: "A", fresh: true, add: 0, del: 0 },
+    { path: "skills/documentation-maintenance/SKILL.md", status: "M", add: 23, del: 0 },
+  ];
+  const rows = flattenFileTree(buildFileTree(files), 0, new Set(), []);
+
+  assert.deepEqual(
+    rows.map((row) => [row.isDir, row.path, row.name]),
+    [
+      [true, ".worktrees", ".worktrees"],
+      [false, ".worktrees/delivery-lead/", "delivery-lead"],
+      [true, "skills", "skills"],
+      [true, "skills/documentation-maintenance", "documentation-maintenance"],
+      [false, "skills/documentation-maintenance/SKILL.md", "SKILL.md"],
+    ]
+  );
+  assert.equal(rows.some((row) => row.name === ""), false, "no empty-named ghost row");
+  assert.equal(rows[1].file.nestedRepo, true);
+  assert.equal(rows[1].file.binary, true);
+  assert.equal(isDiffable(rows[1].path, rows[1].file), false);
+});
+
 test("detailsColumns: stacks when narrow and splits message/files when wide", () => {
   assert.equal(DETAILS_COLUMNS_MIN_WIDTH, 700);
   assert.equal(DETAILS_MESSAGE_MIN_WIDTH, 260);
@@ -1652,6 +1675,10 @@ test("isDiffable: identifies binary non-diffable files by extension and git meta
   assert.equal(isDiffable("unknown-file", { binary: true }), false);
   assert.equal(isDiffable("unknown-file", { binary: false }), true);
   assert.equal(isDiffable("unknown-file", { file: { binary: true } }), false);
+
+  // Directory / embedded-repository paths are not files to diff.
+  assert.equal(isDiffable(".worktrees/delivery-lead/"), false);
+  assert.equal(isDiffable("some/dir/"), false);
 
   // Empty or invalid input
   assert.equal(isDiffable(""), false);

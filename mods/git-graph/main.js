@@ -5086,11 +5086,12 @@ export default class GitGraph extends View {
     const iconPath = row.isDir ? FOLDER_ICON_PATH : fileIconPath(row.name, isLightColor(t.background));
     const status = row.status || "M";
     const diffable = row.isDir || isDiffable(row.path, row.file);
+    const notDiffable = row.file?.nestedRepo ? "Nested repository (not diffable)" : "Binary file (not diffable)";
     const tip = row.isDir
       ? `${row.path}\n${row.add} added · ${row.del} removed\nClick to ${row.isExpanded ? "collapse" : "expand"}`
       : diffable
       ? `${row.path}\n${statusLabel(status)} · ${row.add} added · ${row.del} removed\nClick to open the diff`
-      : `${row.path}\n${statusLabel(status)} · Binary file (not diffable)`;
+      : `${row.path}\n${statusLabel(status)} · ${notDiffable}`;
 
     return h_flex()
       .id(`${row.isDir ? "dir" : "file"}-${row.path}`)
@@ -5167,7 +5168,7 @@ export default class GitGraph extends View {
               .text_color(color(t.foreground))
               .child(row.name)
           )
-          .when(!row.isDir, (e) =>
+          .when(!row.isDir && !row.file?.nestedRepo, (e) =>
             e.child(this.renderOpenFileButton(row.path, t, cx, this.hoveredFilePath === row.path))
           )
           // Keep the status letter and line counts right-aligned even though the
@@ -8147,7 +8148,8 @@ export default class GitGraph extends View {
       const path = file.path;
       const normPath = this.root && path.startsWith(this.root + "/") ? path.slice(this.root.length + 1) : path;
       const absolutePath = resolveRepoPath(this.root, normPath);
-      const canShowFile = this.fileEditorAvailable === true;
+      const nestedRepo = file.nestedRepo === true;
+      const canShowFile = this.fileEditorAvailable === true && !nestedRepo;
       const diffable = isDiffable(normPath, file.file ?? file);
 
       return div()
@@ -8198,7 +8200,7 @@ export default class GitGraph extends View {
                 "Show Diff",
                 "mods/git-graph/icons/file.svg",
                 (cx) => this.openDiffTab(normPath, cx),
-                diffable ? null : "Binary file cannot be diffed",
+                diffable ? null : nestedRepo ? "Nested repository cannot be diffed" : "Binary file cannot be diffed",
                 !diffable
               )
             )
@@ -8208,7 +8210,7 @@ export default class GitGraph extends View {
                 "Show File",
                 "mods/git-graph/icons/open-file.svg",
                 (cx) => this.openFileInEditor(normPath, cx),
-                canShowFile ? null : FILE_EDITOR_INSTALL_HINT,
+                canShowFile ? null : nestedRepo ? "Nested repository cannot be opened as a file" : FILE_EDITOR_INSTALL_HINT,
                 !canShowFile
               )
             )
