@@ -21,6 +21,10 @@ import {
   computeLanes,
   buildFileTree,
   flattenFileTree,
+  detailsColumns,
+  DETAILS_COLUMNS_MIN_WIDTH,
+  DETAILS_MESSAGE_MIN_WIDTH,
+  DETAILS_MESSAGE_MAX_WIDTH,
   buildDiffView,
   intraLineDiff,
   diffRows,
@@ -497,6 +501,29 @@ test("buildFileTree: a directory added after a file with the same name keeps bot
     ]
   );
   assert.equal(rows[2].file.status, "D");
+});
+
+test("detailsColumns: stacks when narrow and splits message/files when wide", () => {
+  assert.equal(DETAILS_COLUMNS_MIN_WIDTH, 700);
+  assert.equal(DETAILS_MESSAGE_MIN_WIDTH, 260);
+  assert.equal(DETAILS_MESSAGE_MAX_WIDTH, 440);
+
+  // Unknown or narrow panes keep the single-column stack.
+  assert.deepEqual(detailsColumns(0), { columns: false, messageWidth: 0 });
+  assert.deepEqual(detailsColumns(undefined), { columns: false, messageWidth: 0 });
+  assert.deepEqual(detailsColumns(560), { columns: false, messageWidth: 0 });
+  assert.deepEqual(detailsColumns(699), { columns: false, messageWidth: 0 });
+
+  // At the breakpoint the message takes 40% of the pane.
+  assert.deepEqual(detailsColumns(700), { columns: true, messageWidth: 280 });
+
+  // The message column stays between its readable bounds.
+  assert.deepEqual(detailsColumns(780), { columns: true, messageWidth: 312 });
+  assert.deepEqual(detailsColumns(1600), { columns: true, messageWidth: 440 });
+
+  // Bad input never produces a column wider than the pane.
+  assert.deepEqual(detailsColumns("900"), { columns: false, messageWidth: 0 });
+  assert.deepEqual(detailsColumns(-10), { columns: false, messageWidth: 0 });
 });
 
 test("buildDiffView: left and right columns have equal length for unbalanced hunk", () => {

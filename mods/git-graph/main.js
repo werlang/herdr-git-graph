@@ -50,6 +50,7 @@ import {
   computeLanes,
   buildFileTree,
   flattenFileTree,
+  detailsColumns,
   tagArgs,
   deleteTagArgs,
   pushTagArgs,
@@ -5601,11 +5602,34 @@ export default class GitGraph extends View {
     return Math.max(32, Math.min(natural, isCompact ? 150 : 200));
   }
 
+  /**
+   * The commit body. It sits above the changed-file tree in the stacked
+   * layout and becomes its own full-height column once the pane is wide
+   * enough for both to stay readable side by side.
+   */
+  renderCommitMessage(message, t, isCompact, layout) {
+    return div()
+      .id("commit-message")
+      .flex_none()
+      .p(8)
+      .overflow_y_scrollbar()
+      .whitespace_normal()
+      .border_color(color(t.border))
+      .text_size(11)
+      .text_color(color(t.dim))
+      .when(layout.columns, (e) => e.w(layout.messageWidth).h_full().min_h(0).border_r(1))
+      .when(!layout.columns, (e) =>
+        e.h(this.commitMessageHeight(message, isCompact)).border_b(1)
+      )
+      .child(message);
+  }
+
   renderDetailsPanel(t, isCompact, cx) {
     const c = this.selectedCommit;
     if (!c) return null;
 
     const fullMsg = this.commitDetails?.fullMessage || c.subject;
+    const layout = detailsColumns(this.width);
 
     return v_flex()
       .id("commit-details-panel")
@@ -5679,26 +5703,36 @@ export default class GitGraph extends View {
               .child("✕ Close")
           )
       )
-      // Panel Body: the commit message, then the changed-file tree. Files open
-      // their diff in a dedicated tab instead of a cramped inline editor.
-      .child(
-        v_flex()
-          .flex_1()
-          .min_h(0)
-          .child(
-            div()
-              .flex_none()
-              .h(this.commitMessageHeight(fullMsg, isCompact))
-              .p(8)
-              .overflow_y_scrollbar()
-              .whitespace_normal()
-              .border_b(1)
-              .border_color(color(t.border))
-              .text_size(11)
-              .text_color(color(t.dim))
-              .child(fullMsg)
-          )
-          .child(this.renderTreeList(t, cx))
+      // Panel Body: the commit message and the changed-file tree. They stack in
+      // a narrow pane and share two columns in a wide one. Files open their diff
+      // in a dedicated tab instead of a cramped inline editor.
+      .when(layout.columns, (e) =>
+        e.child(
+          h_flex()
+            .flex_1()
+            .min_h(0)
+            // h_flex centers its children on the cross axis; the tree column
+            // needs the row's full height so its scroll region can resolve.
+            .items_stretch()
+            .child(this.renderCommitMessage(fullMsg, t, isCompact, layout))
+            .child(
+              v_flex()
+                .flex_1()
+                .h_full()
+                .min_w(0)
+                .min_h(0)
+                .child(this.renderTreeList(t, cx))
+            )
+        )
+      )
+      .when(!layout.columns, (e) =>
+        e.child(
+          v_flex()
+            .flex_1()
+            .min_h(0)
+            .child(this.renderCommitMessage(fullMsg, t, isCompact, layout))
+            .child(this.renderTreeList(t, cx))
+        )
       );
   }
 

@@ -67,7 +67,8 @@ Instead of switching away to an external Git GUI or browser tool, `git-graph` re
   - Porcelain status letters on the right: Added (green/`ansi2`), Deleted (red/`ansi1`), Modified (blue/`ansi4`), Conflict (yellow/`ansi3`).
   - Colored per-file `+added` / `−deleted` counts beside the status letter (green/red); untracked diffable text files also show `+N` by counting their lines. The hover tooltip keeps the full path and status label.
   - The details pane below the graph is resizable: drag the divider to change how much of the panel belongs to the commit list and how much to the changed-file tree.
-  - The commit message wraps and expands with its content up to a readable cap, then scrolls, so the description is never clipped.
+  - In a wide pane (700px or more) the commit message and the changed-file tree sit side by side, with the message in its own scrollable column; narrower panes keep them stacked.
+  - In the stacked layout the commit message wraps and expands with its content up to a readable cap, then scrolls, so the description is never clipped.
 - **Full-Size Diff Tabs**:
   - Clicking a diffable file in the changed-files tree opens its diff in a dedicated Herdr tab (`Diff · <file>`): the tab header shows the file's Material icon, and the body is a virtualized editor with old/new line gutters, green/red change backgrounds, styled hunk headers, and horizontal scrolling for long lines. Non-diffable binary files (`.png`, images, audio, video, archives, binaries) are not diffable and do not open diff tabs.
   - Three layouts, switchable from the tab toolbar and remembered across tabs: **Inline** (unified), **Split** (old and new side by side), and **Stacked** (old above new). Both split panes share one vertical scroll position and keep their own horizontal scrollbar.

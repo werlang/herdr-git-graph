@@ -1094,6 +1094,36 @@ export function flattenFileTree(node, depth, collapsedFolders, rows = []) {
   return rows;
 }
 
+/** Pane width at which the details body splits into message and files columns. */
+export const DETAILS_COLUMNS_MIN_WIDTH = 700;
+/** Readable bounds for the commit-message column in the two-column layout. */
+export const DETAILS_MESSAGE_MIN_WIDTH = 260;
+export const DETAILS_MESSAGE_MAX_WIDTH = 440;
+
+/**
+ * Decides how the commit details body is laid out.
+ *
+ * Below the breakpoint the commit message and the changed-file tree stack in
+ * one column. At or above it they sit side by side, so a wide pane does not
+ * spend the top half of the tree on a short description. The message column
+ * takes 40% of the width, clamped to a readable range, and the tree keeps the
+ * rest of the pane.
+ *
+ * @param {number | null | undefined} width Pane width in logical pixels.
+ * @returns {{ columns: boolean, messageWidth: number }}
+ */
+export function detailsColumns(width) {
+  const paneWidth = Number.isFinite(width) && width > 0 ? width : 0;
+  if (paneWidth < DETAILS_COLUMNS_MIN_WIDTH) {
+    return { columns: false, messageWidth: 0 };
+  }
+  const messageWidth = Math.min(
+    DETAILS_MESSAGE_MAX_WIDTH,
+    Math.max(DETAILS_MESSAGE_MIN_WIDTH, Math.round(paneWidth * 0.4))
+  );
+  return { columns: true, messageWidth };
+}
+
 export const NON_DIFFABLE_EXTENSIONS = new Set([
   // Images
   "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "tif", "avif",
