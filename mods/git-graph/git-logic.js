@@ -1584,6 +1584,55 @@ export function parseWorktreeList(stdout) {
 }
 
 /**
+ * Repository-relative roots of linked worktrees nested inside this checkout.
+ *
+ * A worktree created under the repository (for example
+ * `.worktrees/feature`) is a separate checkout, but Git reports its root as an
+ * untracked embedded repository in the main checkout. The working-tree list
+ * must not treat it as project content: committing it would record a gitlink,
+ * not the worktree's files.
+ *
+ * Worktrees outside the current checkout, and the current checkout itself,
+ * produce no prefix.
+ *
+ * @param {string | null | undefined} root Absolute current checkout root.
+ * @param {Array<{ path: string, branch: string | null, main: boolean }>} checkouts
+ * @returns {string[]} Forward-slash relative paths without trailing slashes.
+ */
+export function linkedWorktreePrefixes(root, checkouts) {
+  const normRoot = normalizeCheckoutPath(root);
+  if (!normRoot) return [];
+  const prefixes = [];
+  for (const checkout of checkouts ?? []) {
+    if (!checkout || checkout.main) continue;
+    const path = normalizeCheckoutPath(checkout.path);
+    if (!path.startsWith(normRoot + "/")) continue;
+    const relative = path.slice(normRoot.length + 1);
+    if (relative && !relative.startsWith("../")) prefixes.push(relative);
+  }
+  return prefixes;
+}
+
+/**
+ * Whether a `git status` path belongs to a linked worktree nested inside the
+ * current checkout. Git emits the worktree root with a trailing slash, so the
+ * comparison ignores trailing slashes and never matches a sibling whose name
+ * only starts with the worktree name (`feature` vs `feature-2`).
+ *
+ * @param {string | null | undefined} path Repository-relative status path.
+ * @param {string[]} prefixes Result of {@link linkedWorktreePrefixes}.
+ * @returns {boolean}
+ */
+export function isLinkedWorktreePath(path, prefixes) {
+  const norm = normalizeCheckoutPath(path);
+  if (!norm) return false;
+  return (prefixes ?? []).some((prefix) => {
+    const p = normalizeCheckoutPath(prefix);
+    return p !== "" && (norm === p || norm.startsWith(p + "/"));
+  });
+}
+
+/**
  * Maps each local branch checked out in a linked worktree to that checkout's
  * path. The main checkout is left out: its branch is an ordinary branch.
  *

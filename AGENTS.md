@@ -96,6 +96,7 @@ The script copies `mods/git-graph` to `~/.config/herdr-app/mods/git-graph` and r
   - A hidden copy skips its 10 s git refresh; the visibility watcher refreshes it when it is shown again.
 - **Working Tree Inspection**:
   - Inspects uncommitted changes via `git status --porcelain=v1 -z --no-renames --untracked-files=all` and diff stats.
+  - Linked worktrees nested inside the checkout (for example `.worktrees/<slug>`) are excluded from the status list using the `git worktree list` checkouts already loaded for the refresh (`linkedWorktreePrefixes` / `isLinkedWorktreePath` in `git-logic.js`). Git reports each one as a single untracked embedded repository; showing or staging it would only record a gitlink, not the worktree's files.
   - Displays a top "WIP" row with `+add` / `−del` badges connected directly to HEAD in lane 0.
   - Inspects modified, added, deleted, and untracked files; each diff opens in its own tab.
   - Right-clicking the WIP row opens a context menu: **Stash All Changes…** (optional message, include-untracked toggle), **Stash Staged Changes…**, and **Unstash Latest…** when a stash exists.

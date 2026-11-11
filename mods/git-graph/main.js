@@ -91,6 +91,8 @@ import {
   fetchRemoteBranchArgs,
   renameRemoteBranchPushArgs,
   parseWorktreeList,
+  linkedWorktreePrefixes,
+  isLinkedWorktreePath,
   worktreeBranchMap,
   findBranchCheckout,
   markWorktreeRefs,
@@ -1959,7 +1961,12 @@ export default class GitGraph extends View {
           }
         }
 
-        // Working tree status & numstat
+        // Working tree status & numstat. Linked worktrees created inside this
+        // checkout are separate repositories: Git lists their root as one
+        // untracked embedded repo, and staging it would record a gitlink.
+        // Keep them out of the working tree so the AI worker cannot commit them.
+        const checkouts = checkoutsRes.code === 0 ? parseWorktreeList(checkoutsRes.stdout) : [];
+        const worktreePrefixes = linkedWorktreePrefixes(root, checkouts);
         const wtFiles = [];
         let stagedCount = 0;
         if (statusRes.code === 0 && statusRes.stdout) {
@@ -1987,6 +1994,7 @@ export default class GitGraph extends View {
           for (const entry of statusEntries.slice(0, 1000)) {
             const xy = entry.slice(0, 2);
             const filePath = entry.slice(3);
+            if (isLinkedWorktreePath(filePath, worktreePrefixes)) continue;
             const fresh = xy === "??";
             const conflict = xy.includes("U") || xy === "AA" || xy === "DD";
             if (!conflict && xy[0] !== " " && xy[0] !== "?") stagedCount++;
@@ -2055,7 +2063,7 @@ export default class GitGraph extends View {
         this.workingTreeFiles = wtFiles;
         this.stagedCount = stagedCount;
         this.stashes = stashes;
-        this.checkouts = checkoutsRes.code === 0 ? parseWorktreeList(checkoutsRes.stdout) : [];
+        this.checkouts = checkouts;
         this.commits = commits;
         this.error = logError;
         this.applyFilter();

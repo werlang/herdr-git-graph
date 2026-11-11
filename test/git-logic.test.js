@@ -62,6 +62,8 @@ import {
   OPENCODE_INSTALL_CMD,
   OPENCODE_DOCS_URL,
   parseWorktreeList,
+  linkedWorktreePrefixes,
+  isLinkedWorktreePath,
   worktreeBranchMap,
   findBranchCheckout,
   markWorktreeRefs,
@@ -1576,6 +1578,38 @@ test("normalizeCheckoutPath and SPACE_ACTIONS_MOD", () => {
   assert.equal(normalizeCheckoutPath("/wt/app//"), "/wt/app");
   assert.equal(normalizeCheckoutPath(null), "");
   assert.equal(SPACE_ACTIONS_MOD, "worktree-plus");
+});
+
+test("linkedWorktreePrefixes: only linked worktrees nested inside the current checkout", () => {
+  const checkouts = [
+    { path: "/repo", branch: "main", main: true },
+    { path: "/repo/.worktrees/feature", branch: "feat/feature", main: false },
+    { path: "/elsewhere/feature", branch: "feat/outside", main: false },
+    { path: "/repo-2/.worktrees/feature", branch: "feat/sibling", main: false },
+  ];
+  assert.deepEqual(linkedWorktreePrefixes("/repo", checkouts), [".worktrees/feature"]);
+
+  // When the graph is opened inside the linked worktree, its own checkout is
+  // the current root: nothing nested inside it should be hidden.
+  assert.deepEqual(linkedWorktreePrefixes("/repo/.worktrees/feature", checkouts), []);
+
+  // Trailing slashes and Windows separators are normalized.
+  assert.deepEqual(
+    linkedWorktreePrefixes("/repo/", [{ path: "/repo\\.worktrees\\feature\\", main: false }]),
+    [".worktrees/feature"]
+  );
+  assert.deepEqual(linkedWorktreePrefixes("", checkouts), []);
+});
+
+test("isLinkedWorktreePath: matches the root, trailing slash, and children, never siblings", () => {
+  const prefixes = [".worktrees/feature"];
+  assert.equal(isLinkedWorktreePath(".worktrees/feature/", prefixes), true);
+  assert.equal(isLinkedWorktreePath(".worktrees/feature", prefixes), true);
+  assert.equal(isLinkedWorktreePath(".worktrees/feature/file.md", prefixes), true);
+  assert.equal(isLinkedWorktreePath(".worktrees/feature-2/", prefixes), false);
+  assert.equal(isLinkedWorktreePath(".worktrees", prefixes), false);
+  assert.equal(isLinkedWorktreePath("skills/x/SKILL.md", prefixes), false);
+  assert.equal(isLinkedWorktreePath("", prefixes), false);
 });
 
 test("parseCommitStats: sums numstat lines and treats binary files as zero lines", () => {
