@@ -778,7 +778,7 @@ export function parseCommitLog(stdout) {
  * @param {Array<any>} commits
  * @returns {number} maxGlobalLane
  */
-export function computeLanes(commits) {
+export function computeLanes(commits, options = {}) {
   let activeLanes = [];
   let activeLaneColors = [];
   let nextColorIdx = 0;
@@ -861,7 +861,7 @@ export function computeLanes(commits) {
       const pHash = parents[pIdx];
       const parentExists = commitHashes.has(pHash);
 
-      if (!parentExists) {
+      if (!parentExists && options.terminateMissingParents) {
         // Parent is outside the current filtered view or reachability.
         // Render an outgoing connector that gracefully terminates at the row edge.
         commit.parentConnections.push({

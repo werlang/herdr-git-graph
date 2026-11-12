@@ -409,12 +409,12 @@ test("computeLanes: branch and merge use two lanes, side branch rejoins, and mer
   assert.equal(branchMerge[3].colorIdx, 0);
 });
 
-test("computeLanes: missing parent gives terminated: true without lane leaks", () => {
+test("computeLanes: missing parent gives terminated: true when terminateMissingParents is enabled", () => {
   const commits = [
     { hash: "c2", parents: ["c1", "external-hash"] },
     { hash: "c1", parents: [] },
   ];
-  computeLanes(commits);
+  computeLanes(commits, { terminateMissingParents: true });
 
   const termConn = commits[0].parentConnections.find(
     (p) => p.parentHash === "external-hash"
@@ -426,6 +426,31 @@ test("computeLanes: missing parent gives terminated: true without lane leaks", (
   assert.equal(commits[1].passThroughLanes.length, 0);
   assert.equal(commits[1].edgesUp.length, 1);
   assert.equal(commits[1].edgesUp[0].to, 0);
+});
+
+test("computeLanes: unresolved parents in paginated slices keep lanes open without premature termination or lane stealing", () => {
+  // Scenario matching node-aec with commitLimit=100:
+  // Merge commit m splits into main branch (c_main) and side branch (c_side).
+  // c_side's parent (p_side) and c_main's parent (p_main) lie past the loaded slice.
+  // Independent branch c_other starts while both streams are active.
+  const commits = [
+    { hash: "m", parents: ["c_main", "c_side"] },
+    { hash: "c_side", parents: ["p_side_past_page"] },
+    { hash: "c_main", parents: ["p_main_past_page"] },
+    { hash: "c_other", parents: ["p_other"] },
+  ];
+  computeLanes(commits);
+
+  // Neither parent terminates prematurely mid-slice
+  assert.equal(commits[1].parentConnections[0].terminated, false);
+  assert.equal(commits[2].parentConnections[0].terminated, false);
+
+  // c_main has c_side passing through
+  assert.equal(commits[2].passThroughLanes.length, 1);
+
+  // c_other gets assigned a separate lane (lane 2) instead of stealing lane 0 or 1
+  assert.equal(commits[3].lane, 2);
+  assert.equal(commits[3].passThroughLanes.length, 2);
 });
 
 test("computeLanes: color index stays stable along first-parent chain", () => {

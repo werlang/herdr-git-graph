@@ -45,7 +45,7 @@ The script copies `mods/git-graph` to `~/.config/herdr-app/mods/git-graph` and r
   - `computeLanes` also records, per row, the edges crossing its top and bottom (`edgesUp` / `edgesDown`: `{ from, to, colorIdx }` lanes). Every edge runs node-row center to node-row center as one cosine S-curve; `renderGraphLanes` draws its upper half in the row it leaves and its lower half in the row it enters, so splits and merges bend over a full row.
   - A first-parent edge keeps the child's color while it bends, so a side branch rejoins its base in its own color. Edges from the working tree are dotted.
   - Commits are solid dots (merges included), HEAD gets a halo ring, and the working tree is a hollow ring.
-  - Parents outside the current branch or filtered view gracefully terminate at the row edge (`terminated: true`) without leaving zombie rails across unrelated commits.
+  - Unresolved parents in paginated slices keep their lanes open so parallel branch streams pass through smoothly without premature termination or lane stealing; missing parents in search-filtered views gracefully terminate at the row edge (`terminated: true`, enabled via `terminateMissingParents`) without leaving zombie rails across unrelated search results.
   - Dynamically recalculates lanes on filtered commit subsets when searching or switching branch reachability.
 - **Virtualized High-Performance Commit Table**:
   - Uses `uniform_list` with `Scrollbar.vertical` for smooth 60fps scrolling across repositories with thousands of commits.

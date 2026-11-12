@@ -1670,7 +1670,9 @@ export default class GitGraph extends View {
     } else {
       this.workingTreeNode = null;
     }
-    this.maxLane = computeLanes([...laneItems, ...matched]);
+    this.maxLane = computeLanes([...laneItems, ...matched], {
+      terminateMissingParents: Boolean(this.searchQuery),
+    });
   }
 
   getVisibleItems() {
