@@ -13,6 +13,7 @@ import {
   logArgs,
   tagArgs,
   deleteTagArgs,
+  discardFileArgs,
   pushTagArgs,
   deleteRemoteTagArgs,
   lsRemoteTagArgs,
@@ -2273,4 +2274,16 @@ test("hasWorktreeWatchChange: ignores Git metadata churn from the watcher", () =
   // Windows separators normalize the same way.
   assert.equal(hasWorktreeWatchChange("C:\\repo", ["C:\\repo\\.git\\index"]), false);
   assert.equal(hasWorktreeWatchChange("C:\\repo", ["C:\\repo\\src\\main.js"]), true);
+});
+
+test("discardFileArgs: picks clean, rm, or restore from the porcelain status", () => {
+  assert.deepEqual(discardFileArgs("??", "-new.txt"), [["clean", "-f", "-q", "--", "-new.txt"]]);
+  assert.deepEqual(discardFileArgs("A ", "a.js"), [["rm", "-f", "-q", "--", "a.js"]]);
+  assert.deepEqual(discardFileArgs("AM", "a.js"), [["rm", "-f", "-q", "--", "a.js"]]);
+  assert.deepEqual(discardFileArgs(" M", "a.js", { hasHead: false }), [["rm", "-f", "-q", "--", "a.js"]]);
+  for (const xy of [" M", "M ", "MM", " D", "D ", "UU", "AA"].filter((x) => x[0] !== "A")) {
+    assert.deepEqual(discardFileArgs(xy, "a.js"), [
+      ["restore", "--source=HEAD", "--staged", "--worktree", "--", "a.js"],
+    ]);
+  }
 });

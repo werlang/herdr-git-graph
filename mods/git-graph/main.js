@@ -53,6 +53,7 @@ import {
   detailsColumns,
   tagArgs,
   deleteTagArgs,
+  discardFileArgs,
   pushTagArgs,
   deleteRemoteTagArgs,
   lsRemoteTagArgs,
@@ -2005,7 +2006,7 @@ export default class GitGraph extends View {
             if (!conflict && xy[0] !== " " && xy[0] !== "?") stagedCount++;
             const s = conflict ? "U" : xy.includes("D") ? "D" : fresh || xy.includes("A") ? "A" : "M";
             const stat = stats[filePath] ?? { add: 0, del: 0, binary: false };
-            wtFiles.push({ path: filePath, status: s, fresh, ...stat });
+            wtFiles.push({ path: filePath, status: s, xy, fresh, ...stat });
           }
 
           // Untracked files line count: count lines only for diffable text files.
@@ -3038,7 +3039,8 @@ export default class GitGraph extends View {
     if (!file || file.isDir) return;
     const narrow = this.width > 0 && this.width < 400;
     const menuWidth = narrow ? Math.max(200, Math.min(260, this.width - 20)) : 280;
-    const menuHeight = 135;
+    // Working-tree files get a separator plus the Discard Changes item.
+    const menuHeight = this.selectedCommit?.isWorkingTree ? 168 : 135;
     const zoom = Number(settings()?.zoom) || 1;
     const { x, y } = contextMenuPosition({
       origin: this.rootOrigin,
@@ -3166,6 +3168,15 @@ export default class GitGraph extends View {
       });
       this.modalInput.on("submit", (_e, cx) => this.submitModal(cx));
       this.focusModalInput(cx);
+    } else if (type === "discard-file") {
+      this.modalDialog = {
+        type,
+        filePath: target?.path || "",
+        xy: target?.xy || "",
+        untracked: target?.xy === "??",
+        error: null,
+      };
+      this.modalInput = null;
     } else if (type === "unstash" || type === "drop-stash") {
       this.modalDialog = {
         type,
@@ -3773,6 +3784,29 @@ export default class GitGraph extends View {
             fail((r.stderr || r.stdout).trim().slice(0, 800) || `Failed to restore ${stashRef}`);
             this.refresh(cx);
           }
+        } else if (type === "discard-file") {
+          const filePath = dialog.filePath;
+          if (!filePath) {
+            fail("No file selected");
+            return;
+          }
+          for (const args of discardFileArgs(dialog.xy, filePath, { hasHead: this.hasHead })) {
+            const r = await exec("git", [...NON_INTERACTIVE, ...args], { cwd: root, on });
+            if (r.code !== 0) {
+              fail((r.stderr || r.stdout).trim().slice(0, 800) || `Failed to discard ${filePath}`);
+              this.refresh(cx);
+              return;
+            }
+          }
+          this.closeModal(cx);
+          if (this.selectedFile === filePath) this.selectedFile = null;
+          notify({
+            title: dialog.untracked ? "File deleted" : "Changes discarded",
+            body: filePath,
+            level: "success",
+            timeout: 2000,
+          });
+          this.refresh(cx);
         } else if (type === "drop-stash") {
           const stashRef = dialog.stashRef || "stash@{0}";
           const r = await exec("git", [...NON_INTERACTIVE, "stash", "drop", "--end-of-options", stashRef], {
@@ -8293,6 +8327,16 @@ export default class GitGraph extends View {
       const nestedRepo = file.nestedRepo === true;
       const canShowFile = this.fileEditorAvailable === true && !nestedRepo;
       const diffable = isDiffable(normPath, file.file ?? file);
+      // Discarding only makes sense for uncommitted changes, never for a
+      // commit's or stash's file list.
+      const wtFile = this.selectedCommit?.isWorkingTree
+        ? this.workingTreeFiles.find((f) => f.path === normPath)
+        : null;
+      const discardBlocked = nestedRepo
+        ? "Nested repository cannot be discarded from here"
+        : this.busy
+          ? "Another git action is running"
+          : null;
 
       return div()
         .id("context-menu-backdrop")
@@ -8373,6 +8417,21 @@ export default class GitGraph extends View {
                 },
                 absolutePath
               )
+            )
+            .when(Boolean(wtFile), (e) =>
+              e
+                .child(div().h(1).bg(color(t.border)).my(3))
+                .child(
+                  menuItem(
+                    "fmenu-discard",
+                    "Discard Changes…",
+                    "mods/git-graph/icons/trash.svg",
+                    (cx) => this.openModal("discard-file", wtFile, cx),
+                    discardBlocked,
+                    Boolean(discardBlocked),
+                    true
+                  )
+                )
             )
         );
     }
@@ -8635,6 +8694,10 @@ export default class GitGraph extends View {
                           ? `Unstash ${dialog.stashRef || "Latest"}`
                           : dialog.type === "drop-stash"
                           ? `Drop ${dialog.stashRef || "Stash"}`
+                          : dialog.type === "discard-file"
+                          ? dialog.untracked
+                            ? "Delete Untracked File"
+                            : "Discard File Changes"
                           : dialog.type === "publish"
                           ? "Publish to GitHub"
                           : dialog.type === "clone"
@@ -8734,6 +8797,10 @@ export default class GitGraph extends View {
                       ? `Apply "${dialog.stashSubject || dialog.stashRef}" and remove it from the stash list`
                       : dialog.type === "drop-stash"
                       ? `Permanently remove "${dialog.stashSubject || dialog.stashRef}" from the stash list`
+                      : dialog.type === "discard-file"
+                      ? dialog.untracked
+                        ? `Delete the untracked file ${dialog.filePath}`
+                        : `Restore ${dialog.filePath} to HEAD, dropping its staged and unstaged changes`
                       : dialog.type === "publish"
                       ? `Create a new GitHub repository${dialog.account ? ` as @${dialog.account}` : ""} and push '${this.currentBranch}'`
                       : dialog.type === "clone"
@@ -8900,6 +8967,23 @@ export default class GitGraph extends View {
                 .child(`Applies ${dialog.stashRef} with --index and removes it from the stash list.`)
                 .when(this.workingTreeFiles.length > 0, (el) =>
                   el.child("The working tree has uncommitted changes; restoring may conflict.")
+                )
+            )
+          )
+          .when(dialog.type === "discard-file", (e) =>
+            e.child(
+              div()
+                .p(8)
+                .rounded(6)
+                .bg(color(t.ansi1 + "18"))
+                .border_1()
+                .border_color(color(t.ansi1 + "44"))
+                .text_size(10.5)
+                .text_color(color(t.ansi1))
+                .child(
+                  dialog.untracked
+                    ? "⚠️ The file is not tracked by Git, so deleting it cannot be undone."
+                    : "⚠️ Uncommitted edits to this file are lost. This cannot be undone."
                 )
             )
           )
@@ -9706,7 +9790,7 @@ export default class GitGraph extends View {
                   .bg(color(
                     dialog.type === "reset" && dialog.resetMode === "hard"
                       ? t.ansi1
-                      : dialog.type === "confirm-delete-branch" || dialog.type === "confirm-delete-worktree-branch" || dialog.type === "confirm-delete-remote-branch" || dialog.type === "delete-tag" || dialog.type === "drop-stash" || dialog.type === "force-push"
+                      : dialog.type === "confirm-delete-branch" || dialog.type === "confirm-delete-worktree-branch" || dialog.type === "confirm-delete-remote-branch" || dialog.type === "delete-tag" || dialog.type === "drop-stash" || dialog.type === "discard-file" || dialog.type === "force-push"
                       ? t.ansi1
                       : t.solid
                   ))
@@ -9744,6 +9828,8 @@ export default class GitGraph extends View {
                         ? "Unstashing…"
                         : dialog.type === "drop-stash"
                         ? "Dropping…"
+                        : dialog.type === "discard-file"
+                        ? "Discarding…"
                         : dialog.type === "clone"
                         ? "Cloning…"
                         : dialog.type === "rename-branch" || dialog.type === "rename-tag"
@@ -9767,6 +9853,10 @@ export default class GitGraph extends View {
                       ? "Unstash"
                       : dialog.type === "drop-stash"
                       ? "Drop Stash"
+                      : dialog.type === "discard-file"
+                      ? dialog.untracked
+                        ? "Delete File"
+                        : "Discard Changes"
                       : dialog.type === "publish"
                       ? "Create & Push"
                       : dialog.type === "clone"

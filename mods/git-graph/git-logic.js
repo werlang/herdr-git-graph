@@ -1279,6 +1279,30 @@ export function tagArgs(name, msg, hash, { annotated = Boolean(msg) } = {}) {
 }
 
 /**
+ * Builds the git commands that discard every uncommitted change to one file,
+ * staged and unstaged, returning it to its HEAD state.
+ *
+ * - Untracked (`??`): the file only exists on disk, so `git clean` removes it.
+ * - Added in the index (`A?`) or no HEAD yet: HEAD has no copy to restore, so
+ *   `git rm -f` drops it from the index and the working tree.
+ * - Anything else (modified, deleted, conflicted): `git restore` from HEAD
+ *   resets both the index and the working tree.
+ *
+ * Paths follow `--`, so a name starting with `-` is never read as an option.
+ *
+ * @param {string} xy two-letter porcelain v1 status code
+ * @param {string} path repository-relative path
+ * @param {{ hasHead?: boolean }} [opts]
+ * @returns {string[][]} argument lists to run in order
+ */
+export function discardFileArgs(xy, path, { hasHead = true } = {}) {
+  const code = String(xy || "");
+  if (code === "??") return [["clean", "-f", "-q", "--", path]];
+  if (!hasHead || code[0] === "A") return [["rm", "-f", "-q", "--", path]];
+  return [["restore", "--source=HEAD", "--staged", "--worktree", "--", path]];
+}
+
+/**
  * Builds safe arguments for deleting a local tag. Remote tags are untouched.
  *
  * @param {string} name
