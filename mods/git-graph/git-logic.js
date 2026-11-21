@@ -726,6 +726,18 @@ export function badgeTooltip(ref) {
 }
 
 /**
+ * True for a snapshot commit whose subject starts with `wip` (`wip: …`,
+ * `WIP - …`, `wip(scope): …`). The table dims these so a throwaway snapshot is
+ * not read as finished work.
+ *
+ * @param {string} subject
+ * @returns {boolean}
+ */
+export function isWipCommit(subject) {
+  return /^wip(?![A-Za-z0-9_])/i.test(String(subject || "").trim());
+}
+
+/**
  * Computes the tooltip for an overflow "+N" refs badge.
  *
  * @param {Array<{ kind?: string, text?: string, pairedRemote?: { text: string } }>} extraRefs

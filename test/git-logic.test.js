@@ -8,6 +8,7 @@ import {
   parseRefs,
   resolveDisplayRefs,
   badgeTooltip,
+  isWipCommit,
   extraRefsTooltip,
   parseCommitLog,
   logArgs,
@@ -2286,4 +2287,13 @@ test("discardFileArgs: picks clean, rm, or restore from the porcelain status", (
       ["restore", "--source=HEAD", "--staged", "--worktree", "--", "a.js"],
     ]);
   }
+});
+
+test("isWipCommit: flags wip snapshot subjects only", () => {
+  assert.equal(isWipCommit("wip: snapshot of uncommitted dev changes"), true);
+  assert.equal(isWipCommit("WIP - half done"), true);
+  assert.equal(isWipCommit("wip(web): cart"), true);
+  assert.equal(isWipCommit("wipe cache on logout"), false);
+  assert.equal(isWipCommit("feat: wip flag"), false);
+  assert.equal(isWipCommit(""), false);
 });

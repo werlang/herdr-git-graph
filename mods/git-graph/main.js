@@ -45,6 +45,7 @@ import {
   parseRefs,
   parseCommitLog,
   resolveDisplayRefs,
+  isWipCommit,
   badgeTooltip,
   extraRefsTooltip,
   computeLanes,
@@ -5032,7 +5033,8 @@ export default class GitGraph extends View {
               .min_w(0)
               .truncate()
               .text_size(12)
-              .text_color(color(t.foreground))
+              .text_color(color(isWipCommit(commit.subject) ? t.muted : t.foreground))
+              .when(isWipCommit(commit.subject), (e) => e.italic().tooltip("Work-in-progress snapshot"))
               .child(commit.subject)
           )
           // Relative Date
