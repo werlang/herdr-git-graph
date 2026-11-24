@@ -241,6 +241,8 @@ test("logArgs: builds safe arguments for git log", () => {
   );
   assert.equal(allArgs[allArgs.length - 1], "--", "must end with --");
   assert.equal(allArgs[allArgs.indexOf("-n") + 1], "500", "defaults to 500 commits");
+  assert.ok(allArgs.includes("--date-order"), "uses --date-order so parallel branches follow timeline order");
+  assert.ok(!allArgs.includes("--topo-order"), "does not use --topo-order");
 
   // Custom commitLimit
   const customLimitArgs = logArgs("all", 250);

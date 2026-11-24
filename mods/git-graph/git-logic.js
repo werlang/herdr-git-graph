@@ -1404,7 +1404,7 @@ export function remoteTagExists(stdout, name) {
 export function logArgs(branchFilter, commitLimit = 500) {
   const args = [
     "log",
-    "--topo-order",
+    "--date-order",
     "--decorate=full",
     "-n",
     String(commitLimit),
